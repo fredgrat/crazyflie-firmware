@@ -58,6 +58,9 @@
 
 #define ADC_INTERNAL_VREF   1.20
 
+// Proximity sensor constant to get inches from volts gievn 2.8 VCC
+#define PROX_CON         0.00546875
+
 /******** Types ********/
 
 typedef struct __attribute__((packed))
@@ -69,6 +72,7 @@ typedef struct __attribute__((packed))
 typedef struct __attribute__((packed))
 {
   AdcPair vbat;
+  AdcPair vprox;
 } AdcGroup;
 
 typedef struct
@@ -116,5 +120,11 @@ void adcInterruptHandler(void);
  * ADC task
  */
 void adcTask(void *param);
+
+/**
+ * Update the Proximity Sensor values
+ */
+void proxSensorUpdate(AdcGroup* adcValues);
+
 
 #endif /* ADC_H_ */
