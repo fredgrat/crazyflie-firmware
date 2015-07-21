@@ -88,9 +88,10 @@ void systemInit(void)
 
   configblockInit();
   workerInit();
-#ifdef PLATFORM_CF1
+
+  /* TODO: For PLATFORM_CF2, do not start this unless necessary, compile time config option? */
   adcInit();
-#endif
+
   ledseqInit();
   pmInit();
     
