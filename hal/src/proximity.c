@@ -41,50 +41,35 @@
 /* Flag indicating if the proximityInit() function has been called or not. */
 static bool isInit = false;
 
-/* Internal values exported by functions below. */
-static uint32_t proximityDistance       = 0; /* The distance measured in millimeters for the latest sample. */
-static uint32_t proximityDistanceAvg    = 0; /* Average distance in millimeters, initialized to zero. */
-static uint32_t proximityDistanceMedian = 0; /* Median distance in millimeters, initialized to zero. */
-static uint32_t proximityAccuracy       = 0; /* The accuracy as reported by the sensor driver for the latest sample. */
-
-/* The most recent samples in chronological order. Must be initialized before use. */
-static uint32_t proximitySWin[PROXIMITY_SWIN_SIZE];
-
 #if defined(PROXIMITY_ENABLED)
 
-#if defined(PROXIMITY_LOG_ENABLED)
-/* Define a log group. */
-LOG_GROUP_START(proximity)
-LOG_ADD(LOG_UINT32, distance, &proximityDistance)
-LOG_ADD(LOG_UINT32, distanceAvg, &proximityDistanceAvg)
-LOG_ADD(LOG_UINT32, distanceMed, &proximityDistanceMedian)
-LOG_ADD(LOG_UINT32, accuracy, &proximityAccuracy)
-LOG_GROUP_STOP(proximity)
-#endif
-
 /**
- * This function returns the median value of an array.
+ * This function returns the median value of the samples in the sliding window for a proximity object.
+ *
+ * The proximity object's attribute 'distanceMedian' is updated with the median value before returning.
  *
  * Internal sorting function by Bill Gentles Nov. 12 2010, seen
  * on http://forum.arduino.cc/index.php?topic=20920.0
  *
- * @param proximitySWin Array of chronologically sequenced samples.
+ * @param proximity Proximity object.
  *
  * @return Median value from the array.
  */
-static uint32_t proximitySWinMedian(uint32_t *proximitySWin)
+static float proximitySWinMedian(proximity_t *proximity)
 {
+  assert_param(proximity);
+
   /* The most recent samples, sorted in increasing sample value order. Must be initialized before use. */
-  uint32_t proximitySorted[PROXIMITY_SWIN_SIZE];
+  float proximitySorted[PROXIMITY_SWIN_MAX];
 
-  /* Create a copy of the chronologically sequenced buffer. */
-  memcpy(proximitySorted, proximitySWin, sizeof(uint32_t)*PROXIMITY_SWIN_SIZE);
+  /* Create a copy of the chronologically sequenced buffer. Copy only the sWinSize number of samples. */
+  memcpy(proximitySorted, proximity->sWin, proximity->sWinSize*sizeof(float));
 
-  /* Now sort this copy. */
+  /* Now sort this copy. Sort only the sWinSize number of samples. */
   uint8_t n;
-  for (n = 1; n < PROXIMITY_SWIN_SIZE; ++n) {
-    uint32_t valn = proximitySorted[n];
-    int8_t m; /* May reach value of -1 */
+  for (n = 1; n < proximity->sWinSize; ++n) {
+    float valn = proximitySorted[n];
+    int8_t m; /* Signed index variable: May reach value of -1 */
     for (m = n - 1; (m >= 0) && (valn < proximitySorted[m]); m--)
     {
       proximitySorted[m + 1] = proximitySorted[m];
@@ -92,39 +77,158 @@ static uint32_t proximitySWinMedian(uint32_t *proximitySWin)
     proximitySorted[m + 1] = valn;
   }
 
-  /* Return the median value of the samples. */
-  return proximitySorted[PROXIMITY_SWIN_SIZE / 2];
+  /* Update the object with the median value of the samples, considering the number of samples is sWinSize. */
+  proximity->distanceMedian = proximitySorted[proximity->sWinSize / 2];
+
+  /* Return calculated value. */
+  return proximity->distanceMedian;
 }
 
 /**
  * This function adds a distance measurement to the sliding window, discarding the oldest sample.
  * After having added the new sample, a new average value of the samples is calculated and returned.
  *
- * @param distance The new sample to add to the sliding window.
+ * The proximity object's attribute 'distanceAvg' is updated with the average value before returning.
+ *
+ * @param proximity Proximity object.
+ * @param distance  The new sample to add to the sliding window.
  *
  * @return The new average value of the samples in the sliding window (after adding the new sample).
  */
-static uint32_t proximitySWinAdd(uint32_t distance)
+static float proximitySWinAdd(proximity_t *proximity, float distance)
 {
-  /* Discard oldest sample, move remaining samples one slot to the left. */
-  memmove(&proximitySWin[0], &proximitySWin[1], (PROXIMITY_SWIN_SIZE - 1) * sizeof(uint32_t));
+  assert_param(proximity);
+
+  /* Discard oldest sample, move remaining samples one slot to the left. Moving only the sWinSize number of samples. */
+  memmove(&proximity->sWin[0], &proximity->sWin[1], (proximity->sWinSize - 1) * sizeof(float));
 
   /* Add the new sample in the last (right-most) slot. */
-  proximitySWin[PROXIMITY_SWIN_SIZE - 1] = distance;
+  proximity->sWin[proximity->sWinSize - 1] = distance;
+
+  /* Update the object. */
+  proximity->distance = distance;
 
   /**
-   * Calculate the new average distance. Sum all the samples into a uint64_t,
+   * Calculate the new average distance. Sum all the sWinSize samples first,
    * so that we only do a single division at the end.
    */
-  uint64_t proximityNewAvg = 0;
+  float proximityNewAvg = 0;
   uint8_t n;
-  for (n = 0; n < PROXIMITY_SWIN_SIZE; n++) {
-    proximityNewAvg += proximitySWin[n];
+  for (n = 0; n < proximity->sWinSize; n++) {
+    proximityNewAvg += proximity->sWin[n];
   }
-  proximityNewAvg = proximityNewAvg / PROXIMITY_SWIN_SIZE;
+  proximityNewAvg = proximityNewAvg / proximity->sWinSize;
 
-  return (uint32_t)proximityNewAvg;
+  /* Update the object with the average value of the samples, considering the number of samples is sWinSize. */
+  proximity->distanceAvg = proximityNewAvg;
+
+  /* Return calculated value. */
+  return proximity->distanceAvg;
 }
+
+/**
+ * Initialize a proximity object.
+ *
+ * @param proximity Proximity object.
+ * @param sWinSize  The number of samples in the sliding window.
+ */
+void proximityInit(proximity_t *proximity, uint32_t sWinSize)
+{
+  assert_param(proximity);
+
+  /* Now initialize the proximity object, including the sliding window. */
+  proximityDeInit(proximity);
+  proximity->sWinSize = sWinSize;
+}
+
+/**
+ * Deinitialize a proximity object.
+ *
+ * @param proximity Proximity object.
+ */
+void proximityDeInit(proximity_t *proximity)
+{
+  assert_param(proximity);
+
+  /* Zero the entire proximity object, including the sliding window of samples. */
+  memset(proximity, 0, sizeof(proximity_t));
+}
+
+/**
+ * Function returning the last proximity measurement.
+ *
+ * @param proximity Proximity object.
+ *
+ * @return The last proximity measurement made.
+ */
+float proximityGetDistance(proximity_t *proximity)
+{
+  assert_param(proximity);
+
+  return proximity->distance;
+}
+
+/**
+ * Function returning the result of the last, average proximity calculation.
+ * The calculation is a simple average of the last PROXIMITY_SWIN_SIZE samples.
+ *
+ * @param proximity Proximity object.
+ *
+ * @return The result from the last, average proximity calculation.
+ */
+float proximityGetDistanceAvg(proximity_t *proximity)
+{
+  assert_param(proximity);
+
+  return proximity->distanceAvg;
+}
+
+/**
+ * Function returning the result of the last, median proximity calculation.
+ * The calculation is the median of the last PROXIMITY_SWIN_SIZE samples.
+ *
+ * @param proximity Proximity object.
+ *
+ * @return The result from the last, median proximity calculation.
+ */
+float proximityGetDistanceMedian(proximity_t *proximity)
+{
+  assert_param(proximity);
+
+  return proximity->distanceMedian;
+}
+
+/**
+ * Function returning the accuracy of the last proximity measurement.
+ *
+ * @param proximity Proximity object.
+ *
+ * @return The accuracy of the last proximity measurement made.
+ */
+float proximityGetAccuracy(proximity_t *proximity)
+{
+  assert_param(proximity);
+
+  return proximity->accuracy;
+}
+
+
+#if defined(MAXSONAR_ENABLED)
+/* A proximity object for the maxsonar driver. */
+static proximity_t proximityMaxSonar;
+#endif
+
+#if defined(PROXIMITY_LOG_ENABLED)
+/* Define a log group. */
+LOG_GROUP_START(proximity)
+#if defined(MAXSONAR_ENABLED)
+LOG_ADD(LOG_FLOAT, ms_distance, &proximityMaxSonar.distance)
+LOG_ADD(LOG_FLOAT, ms_avg, &proximityMaxSonar.distanceAvg)
+LOG_ADD(LOG_FLOAT, ms_med, &proximityMaxSonar.distanceMedian)
+LOG_ADD(LOG_FLOAT, ms_accuracy, &proximityMaxSonar.accuracy)
+#endif
+LOG_GROUP_STOP(proximity)
+#endif
 
 /**
  * Proximity task running at PROXIMITY_TASK_FREQ Hz.
@@ -137,7 +241,7 @@ static void proximityTask(void* param)
 
   vTaskSetApplicationTaskTag(0, (void*)TASK_PROXIMITY_ID_NBR);
 
-  //Wait for the system to be fully started to start stabilization loop
+  //Wait for the system to be fully started to start proximity loop
   systemWaitStart();
 
   lastWakeTime = xTaskGetTickCount();
@@ -148,14 +252,10 @@ static void proximityTask(void* param)
 
 #if defined(MAXSONAR_ENABLED)
     /* Read the MaxBotix sensor. */
-    proximityDistance = maxSonarReadDistance(MAXSONAR_MB1040_AN, &proximityAccuracy);
+    float msDistance = maxSonarReadDistance(MAXSONAR_MB1040_AN, &proximityMaxSonar.accuracy);
+    proximitySWinAdd(&proximityMaxSonar, msDistance);
+    proximitySWinMedian(&proximityMaxSonar);
 #endif
-
-    /* Get the latest average value calculated. */
-    proximityDistanceAvg = proximitySWinAdd(proximityDistance);
-
-    /* Get the latest median value calculated. */
-    proximityDistanceMedian = proximitySWinMedian(proximitySWin);
   }
 }
 #endif
@@ -163,13 +263,14 @@ static void proximityTask(void* param)
 /**
  * Initialization of the proximity task.
  */
-void proximityInit(void)
+void proximityTaskInit(void)
 {
   if(isInit)
     return;
 
-  /* Initialise the sliding window to zero. */
-  memset(&proximitySWin, 0, sizeof(uint32_t)*PROXIMITY_SWIN_SIZE);
+#if defined(MAXSONAR_ENABLED)
+  proximityInit(&proximityMaxSonar, 9);
+#endif
 
 #if defined(PROXIMITY_ENABLED)
   /* Only start the task if the proximity subsystem is enabled in conf.h */
@@ -178,46 +279,4 @@ void proximityInit(void)
 #endif
 
   isInit = true;
-}
-
-/**
- * Function returning the last proximity measurement.
- *
- * @return The last proximity measurement made.
- */
-uint32_t proximityGetDistance(void)
-{
-  return proximityDistance;
-}
-
-/**
- * Function returning the result of the last, average proximity calculation.
- * The calculation is a simple average of the last PROXIMITY_SWIN_SIZE samples.
- *
- * @return The result from the last, average proximity calculation.
- */
-uint32_t proximityGetDistanceAvg(void)
-{
-  return proximityDistanceAvg;
-}
-
-/**
- * Function returning the result of the last, median proximity calculation.
- * The calculation is the median of the last PROXIMITY_SWIN_SIZE samples.
- *
- * @return The result from the last, median proximity calculation.
- */
-uint32_t proximityGetDistanceMedian(void)
-{
-  return proximityDistanceMedian;
-}
-
-/**
- * Function returning the accuracy of the last proximity measurement.
- *
- * @return The accuracy of the last proximity measurement made.
- */
-uint32_t proximityGetAccuracy(void)
-{
-  return proximityAccuracy;
 }

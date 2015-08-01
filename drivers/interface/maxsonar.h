@@ -44,7 +44,7 @@
  * \def MAXSONAR_ENABLED
  * Enable the MaxSonar driver (used by the proximity measurement subsystem).
  */
-//#define MAXSONAR_ENABLED
+#define MAXSONAR_ENABLED
 
 /**
  * \def MAXSONAR_DECK_GPIO
@@ -56,7 +56,7 @@
  * \def MAXSONAR_LOG_ENABLED
  * Uncomment to enable log variables for this driver.
  */
-//#define MAXSONAR_LOG_ENABLED
+#define MAXSONAR_LOG_ENABLED
 
 /**
  * List of MaxBotix sensors with different interface types can be added here.
@@ -67,6 +67,6 @@ typedef enum {
   MAXSONAR_MB1040_AN = 0, /* The MB1040 (LV-MaxSonar-EZ4) sensor read by analog conversion (GPIO pin read by ADC). */
 } maxSonarSensor_t;
 
-uint32_t maxSonarReadDistance(maxSonarSensor_t type, uint32_t *accuracy);
+float maxSonarReadDistance(maxSonarSensor_t type, float *accuracy);
 
 #endif

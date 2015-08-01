@@ -94,7 +94,7 @@ void systemInit(void)
   pmInit();
 
 #ifdef PROXIMITY_ENABLED
-  proximityInit();
+  proximityTaskInit();
 #endif
     
   isInit = true;
