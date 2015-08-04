@@ -43,6 +43,7 @@
 #include "param.h"
 #include "debug.h"
 #include "sitaw.h"
+#include "proximity.h"
 #ifdef PLATFORM_CF1
   #include "ms5611.h"
 #else
@@ -333,11 +334,10 @@ static void stabilizerAltHoldUpdate(void)
 #ifdef PLATFORM_CF1
   ms5611GetData(&pressure, &temperature, &aslRaw);
 #else
-  lps25hGetData(&pressure, &temperature, &aslRaw);
+//  lps25hGetData(&pressure, &temperature, &aslRaw);
 #endif
-
-  asl = asl * aslAlpha + aslRaw * (1 - aslAlpha);
-  aslLong = aslLong * aslAlphaLong + aslRaw * (1 - aslAlphaLong);
+  asl = proximityGetExp(asl, aslAlpha, proximityGetDistanceRaw(&proximityLPS25H));
+  aslLong = proximityGetExp(aslLong, aslAlphaLong, proximityGetDistanceRaw(&proximityLPS25H));
 
   // Estimate vertical speed based on successive barometer readings. This is ugly :)
   vSpeedASL = deadband(asl - aslLong, vSpeedASLDeadband);
