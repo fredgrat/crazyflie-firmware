@@ -31,12 +31,12 @@
 #include "maxsonar.h"
 #include "deck.h"
 
+/* Macro to convert from inches to meters. */
+#define IN2M(x) ((x) * 0.0254f)
+
 /* Internal tracking of last measured distance. */
 static float maxSonarDistance = 0;
 static float maxSonarAccuracy = 0; /* 0 accuracy means no measurement or unknown accuracy. */
-
-/* Macro to convert from inches to meters. */
-#define INCH2METER(a) (0.0254*a)
 
 #if defined(MAXSONAR_LOG_ENABLED)
 /* Define a log group. */
@@ -49,7 +49,7 @@ LOG_GROUP_STOP(maxSonar)
 /**
  * Gets the accuracy for a distance measurement from an MB1040 sonar range finder (LV-MaxSonar-EZ4).
  *
- * @param distance The distance measurement to report the accuracy for.
+ * @param distance The distance measurement to report the accuracy for (mm).
  *
  * @return Accuracy in meters.
  */
@@ -57,7 +57,7 @@ static float maxSonarGetAccuracyMB1040(float distance)
 {
   /* Specify the accuracy of the measurement from the MB1040 (LV-MaxBotix-EZ4) sensor. */
 
-  if(distance <= INCH2METER(6)) {
+  if(distance <= IN2M(6)) {
     /**
      * The datasheet for the MB1040 specifies that any distance below 6 inches is reported as 6 inches.
      * Since all measurements are given in 1 inch steps, the actual distance can be anything
@@ -65,16 +65,16 @@ static float maxSonarGetAccuracyMB1040(float distance)
      *
      * The accuracy is therefore set to 7(!) inches.
      */
-    maxSonarAccuracy = INCH2METER(7);
+    maxSonarAccuracy = IN2M(7);
   }
-  else if(distance <= INCH2METER(20)) {
+  else if(distance >= IN2M(20)) {
     /**
      * The datasheet for the MB1040 specifies that any distance between 6 and 20 inches may result in
      * measurement inaccuracies up to 2 inches.
      */
-    maxSonarAccuracy = INCH2METER(2);
+    maxSonarAccuracy = IN2M(2);
   }
-  else if(distance > INCH2METER(254)) {
+  else if(distance > IN2M(254)) {
     /**
      * The datasheet for the MB1040 specifies that maximum reported distance is 254 inches. If we for
      * some reason should measure more than this, set the accuracy to 0.
@@ -85,7 +85,7 @@ static float maxSonarGetAccuracyMB1040(float distance)
     /**
      * Otherwise the accuracy is specified by the datasheet for the MB1040 to be 1 inch.
      */
-    maxSonarAccuracy = INCH2METER(1);
+    maxSonarAccuracy = IN2M(1);
   }
 
   /* Report accuracy if the caller asked for this. */
@@ -96,7 +96,7 @@ static float maxSonarGetAccuracyMB1040(float distance)
  * Reads distance measurement from an MB1040 sonar range finder (LV-MaxBotix-EZ4) via an analog input interface.
  *
  * @param pin      The GPIO pin to use for ADC conversion.
- * @param accuracy If not NULL, this function will write the accuracy of the distance measurement to this parameter.
+ * @param accuracy If not NULL, this function will write the accuracy of the distance measurement (in mm) to this parameter.
  *
  * @return The distance measurement in meters.
  */
@@ -112,7 +112,9 @@ static float maxSonarReadDistanceMB1040AN(uint8_t pin, float *accuracy)
    * The distance conversion is:             D = (512 / VREF) * V
    * Expanding V, we get:                    D = (512 / VREF) * (analogRead() / 1024 * VREF)
    * Which can be simplified to:             D = analogRead() / 2
-   * Last, we convert inches to meters:      D = INCH2METER(analogRead() / 2)
+   * Last, we convert inches to meters:      D = 0.0254 * analogRead() / 2
+   * Which can be written as:                D = IN2M(analogRead()) / 2
+   *   (to retain the sample's LSB)
    *
    * The above conversion assumes the ADC VREF is the same as the LV-MaxSonar-EZ4 VREF. This means
    * that the MB1040 Sensor must have its VCC pin connected to the VCC pin on the deck port.
@@ -121,7 +123,7 @@ static float maxSonarReadDistanceMB1040AN(uint8_t pin, float *accuracy)
    * the VCC pin on the deck port is safe.
    */
 
-  maxSonarDistance = INCH2METER((float)analogRead(pin) / 2);
+  maxSonarDistance = IN2M(analogRead(pin)) / 2;
 
   if(NULL != accuracy) {
     *accuracy = maxSonarGetAccuracyMB1040(maxSonarDistance);
@@ -133,7 +135,7 @@ static float maxSonarReadDistanceMB1040AN(uint8_t pin, float *accuracy)
  * Reads distance measurement from the specified sensor type.
  *
  * @param type     The MaxSonar sensor type.
- * @param accuracy If not NULL, this function will write the accuracy of the distance measurement to this parameter.
+ * @param accuracy If not NULL, this function will write the accuracy of the distance measurement (in mm) to this parameter.
  *
  * @return The distance measurement in meters.
  */

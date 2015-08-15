@@ -153,7 +153,7 @@ void stabilizerInit(void)
   if(isInit)
     return;
 
-  motorsInit();
+  motorsInit(motorMapBrushed);
   imu6Init();
   sensfusion6Init();
   controllerInit();
