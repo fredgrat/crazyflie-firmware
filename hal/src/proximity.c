@@ -54,7 +54,7 @@ static bool isInit = false;
  *
  * @param proximity Proximity object.
  */
-static void proximityCalcMed(proximity_t *proximity)
+static void proximitySWCalcMed(proximity_t *proximity)
 {
   assert_param(proximity);
 
@@ -87,7 +87,7 @@ static void proximityCalcMed(proximity_t *proximity)
  *
  * @param proximity Proximity object.
  */
-static void proximityCalcAvg(proximity_t *proximity)
+static void proximitySWCalcAvg(proximity_t *proximity)
 {
   assert_param(proximity);
 
@@ -112,7 +112,7 @@ static void proximityCalcAvg(proximity_t *proximity)
  * @param proximity Proximity object.
  * @param distance  The new sample to add to the sliding window.
  */
-static void proximityAddSample(proximity_t *proximity, float distance)
+static void proximitySWAddSample(proximity_t *proximity, float distance)
 {
   assert_param(proximity);
 
@@ -134,12 +134,12 @@ static void proximityAddSample(proximity_t *proximity, float distance)
  * @param proximity Proximity object.
  * @param sWinSize  The number of samples in the sliding window.
  */
-void proximityInit(proximity_t *proximity, uint32_t sWinSize)
+void proximitySWInit(proximity_t *proximity, uint32_t sWinSize)
 {
   assert_param(proximity);
 
   /* Now initialize the proximity object, including the sliding window. */
-  proximityDeInit(proximity);
+  proximitySWDeInit(proximity);
   proximity->sWinSize = sWinSize;
 }
 
@@ -148,7 +148,7 @@ void proximityInit(proximity_t *proximity, uint32_t sWinSize)
  *
  * @param proximity Proximity object.
  */
-void proximityDeInit(proximity_t *proximity)
+void proximitySWDeInit(proximity_t *proximity)
 {
   assert_param(proximity);
 
@@ -172,21 +172,21 @@ void proximityDeInit(proximity_t *proximity)
  * @param updType   The types of calculations to perform after adding the new sample.
  * @param accuracy  The accuracy of the sample, if available. 0 to indicate that accuracy will not be updated.
  */
-void proximityUpdate(proximity_t *proximity, float distance, proximityUpd_t updType, float accuracy)
+void proximitySWUpdate(proximity_t *proximity, float distance, proximityUpd_t updType, float accuracy)
 {
   assert_param(proximity);
 
   /* The sample is added to the sliding window regardless. */
-  proximityAddSample(proximity, distance);
+  proximitySWAddSample(proximity, distance);
 
   /* Check if a new average calculation shall be performed. */
   if((updType && proximityUpdAvg) > 0) {
-    proximityCalcAvg(proximity);
+    proximitySWCalcAvg(proximity);
   }
 
   /* Check if a new median calculation shall be performed. */
   if((updType && proximityUpdMed) > 0) {
-    proximityCalcMed(proximity);
+    proximitySWCalcMed(proximity);
   }
 
   /* Only update accuracy if provided with a sensible value. If not, assume the same as for previous update, or updated otherwise. */
@@ -202,7 +202,7 @@ void proximityUpdate(proximity_t *proximity, float distance, proximityUpd_t updT
  *
  * @return The last, raw proximity measurement sample in the sliding window.
  */
-float proximityGetDistanceRaw(proximity_t *proximity)
+float proximitySWGetRaw(proximity_t *proximity)
 {
   assert_param(proximity);
 
@@ -218,7 +218,7 @@ float proximityGetDistanceRaw(proximity_t *proximity)
  *
  * @return The result from the last, average proximity calculation.
  */
-float proximityGetDistanceAvg(proximity_t *proximity)
+float proximitySWGetAvg(proximity_t *proximity)
 {
   assert_param(proximity);
 
@@ -233,7 +233,7 @@ float proximityGetDistanceAvg(proximity_t *proximity)
  *
  * @return The result from the last, median proximity calculation.
  */
-float proximityGetDistanceMed(proximity_t *proximity)
+float proximitySWGetMed(proximity_t *proximity)
 {
   assert_param(proximity);
 
@@ -247,7 +247,7 @@ float proximityGetDistanceMed(proximity_t *proximity)
  *
  * @return The accuracy of the last proximity measurement made.
  */
-float proximityGetAccuracy(proximity_t *proximity)
+float proximitySWGetAccuracy(proximity_t *proximity)
 {
   assert_param(proximity);
 
@@ -255,24 +255,69 @@ float proximityGetAccuracy(proximity_t *proximity)
 }
 
 /**
- * Calculate the exponential smoothing function.
+ * Function to initialize the proximity Brown object.
+ *
+ * @param proximityBrown The proximity Brown object.
+ * @param alpha          The smoothing factor alpha. Between 0 and 1 inclusive, where 1 means no smoothing.
+ */
+void proximityBrownInit(proximityBrown_t *proximityBrown, float alpha)
+{
+  assert_param(proximityBrown);
+
+  proximityBrown->single_smoothed = 0;
+  proximityBrown->double_smoothed = 0;
+  proximityBrown->alpha = alpha;
+}
+
+/**
+ * Calculate the simple exponential smoothing function.
  *
  * Typically this function is called by a task which uses sensor data to perform
  * stabilization and regulation, commonly running between 100-500Hz.
  *
  * Note that this function is not relevant to call when new samples are added (by using the
- * proximityUpdate() functio). This function is used each time a new smoothed value is needed,
+ * proximityUpdate() function). This function is used each time a new smoothed value is needed,
  * based on the existing measurement samples.
  *
- * @param prevVal The value returned by the previous call to this function. Typically use 0 for the initial call.
- * @param alpha   The alpha value for the smoothing function. Between 0 and 1 exclusive. Start with 0.95 for testing.
- * @param newVal  The new sample value to perform smoothing towards.
+ * @param proximityBrown The proximity Brown object.
+ * @param measurement    The last measurement sample, to perform smoothing towards.
  *
- * @return The exponential smoothing function value.
+ * @return The simple exponential smoothed value.
  */
-float proximityGetExp(float prevVal, float alpha, float newVal)
+float proximityBrownSimpleExp(proximityBrown_t *proximityBrown, float measurement)
 {
-  return prevVal * alpha + newVal * (1 - alpha);
+  assert_param(proximityBrown);
+
+  proximityBrown->single_smoothed = measurement * proximityBrown->alpha + proximityBrown->single_smoothed * (1 - proximityBrown->alpha);
+  return proximityBrown->single_smoothed;
+}
+
+/**
+ * Calculate the linear exponential smoothing function.
+ *
+ * Typically this function is called by a task which uses sensor data to perform
+ * stabilization and regulation, commonly running between 100-500Hz.
+ *
+ * Note that this function is not relevant to call when new samples are added (by using the
+ * proximityUpdate() function). This function is used each time a new smoothed value is needed,
+ * based on the existing measurement samples.
+ *
+ * @param proximityBrown The proximity Brown object.
+ * @param measurement    The last measurement sample, to perform smoothing towards.
+ *
+ * @return The linear exponential smoothed value.
+ */
+float proximityBrownLinearExp(proximityBrown_t *proximityBrown, float measurement)
+{
+  assert_param(proximityBrown);
+
+  proximityBrown->single_smoothed = measurement * proximityBrown->alpha + proximityBrown->single_smoothed * (1 - proximityBrown->alpha);
+  proximityBrown->double_smoothed = proximityBrown->single_smoothed * proximityBrown->alpha + proximityBrown->double_smoothed * (1 - proximityBrown->alpha);
+
+  float est_a = 2 * proximityBrown->single_smoothed - proximityBrown->double_smoothed;
+  float est_b = (proximityBrown->alpha / (1 - proximityBrown->alpha)) * (proximityBrown->single_smoothed - proximityBrown->double_smoothed);
+
+  return est_a + est_b;
 }
 
 #if defined(MAXSONAR_ENABLED)
@@ -335,7 +380,7 @@ static void proximityTask(void* param)
     {
       float msAccuracy;
       float msDistance = maxSonarReadDistance(MAXSONAR_MB1040_AN, &msAccuracy);
-      proximityUpdate(&proximityMaxSonar, msDistance, proximityUpdAll, msAccuracy);
+      proximitySWUpdate(&proximityMaxSonar, msDistance, proximityUpdAll, msAccuracy);
       maxSonarCounter = 0;
     }
 #endif
@@ -346,7 +391,7 @@ static void proximityTask(void* param)
     {
       float lpsPressure, lpsTemperature, lpsDistance;
       lps25hGetData(&lpsPressure, &lpsTemperature, &lpsDistance);
-      proximityUpdate(&proximityLPS25H, lpsDistance, proximityUpdAll, 0);
+      proximitySWUpdate(&proximityLPS25H, lpsDistance, proximityUpdAll, 0);
       LPS25HCounter = 0;
     }
 #endif
@@ -363,11 +408,11 @@ void proximityTaskInit(void)
     return;
 
 #if defined(MAXSONAR_ENABLED)
-  proximityInit(&proximityMaxSonar, PROXIMITY_SWIN_MAX);
+  proximitySWInit(&proximityMaxSonar, PROXIMITY_SWIN_MAX);
 #endif
 
 #if !defined(PLATFORM_CF1)
-  proximityInit(&proximityLPS25H, PROXIMITY_SWIN_MAX);
+  proximitySWInit(&proximityLPS25H, PROXIMITY_SWIN_MAX);
 #endif
 
 #if defined(PROXIMITY_ENABLED)

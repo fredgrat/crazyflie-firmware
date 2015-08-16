@@ -78,6 +78,18 @@ typedef struct {
 } proximity_t;
 
 /**
+ * Proximity object for Brown's functions. The caller must instantiate one object for each measurement being smoothed.
+ *
+ * This object is published here so that users may investigate the attributes during
+ * debugging. Such attributes can for instance be passed through the LOG framework.
+ */
+typedef struct {
+    float alpha;                   /* Alpha smoothing factor. Betwenn 0 and 1 inclusive, where 1 means no smoothing. */
+    float single_smoothed;         /* Single smoothed value. Used by Simple Exponential and Linear Exponential functions. */
+    float double_smoothed;         /* Double smoothed value. Used by Linear Exponential functions. */
+} proximityBrown_t;
+
+/**
  * Calculations to perform when calling the proximityUpdate() function.
  */
 typedef enum {
@@ -86,15 +98,6 @@ typedef enum {
   proximityUpdMed = 2,             /* Calculate the new median value of the sliding window. */
   proximityUpdAll = proximityUpdRaw || proximityUpdAvg || proximityUpdMed,  /* Perform all the available calculations. Typically used for tuning and debugging only. */
 } proximityUpd_t;
-
-/**
- * Smoothing function types.
- */
-typedef enum {
-  proximityExpRaw = 0,             /* Calculate the exponential smoothing from the raw distance measurement. */
-  proximityExpAvg = 1,             /* Calculate the exponential smoothing from the average distance calculation. */
-  proximityExpMed = 2,             /* Calculate the exponential smoothing from the median distance calculation. */
-} proximityExp_t;
 
 #if defined(MAXSONAR_ENABLED)
 /* A proximity object for the maxsonar driver. */
@@ -110,14 +113,21 @@ extern proximity_t proximityLPS25H;
 #define PROXIMITY_LPS25H_SAMPLE_RATE_DIVIDER 4
 #endif
 
-void proximityInit(proximity_t *proximity, uint32_t sWinSize);
-void proximityDeInit(proximity_t *proximity);
-void proximityUpdate(proximity_t *proximity, float distance, proximityUpd_t updType, float accuracy);
-float proximityGetDistanceRaw(proximity_t *proximity);
-float proximityGetDistanceAvg(proximity_t *proximity);
-float proximityGetDistanceMed(proximity_t *proximity);
-float proximityGetAccuracy(proximity_t *proximity);
-float proximityGetExp(float prevVal, float alpha, float newVal);
+/* Proximity functions based on a sliding window of measurements. */
+void proximitySWInit(proximity_t *proximity, uint32_t sWinSize);
+void proximitySWDeInit(proximity_t *proximity);
+void proximitySWUpdate(proximity_t *proximity, float distance, proximityUpd_t updType, float accuracy);
+float proximitySWGetRaw(proximity_t *proximity);
+float proximitySWGetAvg(proximity_t *proximity);
+float proximitySWGetMed(proximity_t *proximity);
+float proximitySWGetAccuracy(proximity_t *proximity);
+
+/* Brown's Simple Exponential and Linear Exponential smoothing. */
+void proximityBrownInit(proximityBrown_t *proximityBrown, float alpha);
+float proximityBrownSimpleExp(proximityBrown_t *proximityBrown, float measurement);
+float proximityBrownLinearExp(proximityBrown_t *proximityBrown, float measurement);
+
+/* Task functions. */
 void proximityTaskInit(void);
 
 #endif

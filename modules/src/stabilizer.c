@@ -123,6 +123,12 @@ static uint16_t altHoldMinThrust    = 00000; // minimum hover thrust - not used 
 static uint16_t altHoldBaseThrust   = 43000; // approximate throttle needed when in perfect hover. More weight/older battery can use a higher value
 static uint16_t altHoldMaxThrust    = 60000; // max altitude hold thrust
 
+static proximityBrown_t aslPB;
+static proximityBrown_t aslLongPB;
+
+static float aslD;
+static proximityBrown_t aslDPB;
+
 
 RPYType rollType;
 RPYType pitchType;
@@ -164,6 +170,11 @@ void stabilizerInit(void)
   rollRateDesired = 0;
   pitchRateDesired = 0;
   yawRateDesired = 0;
+
+  proximityBrownInit(&aslPB, 1 - aslAlpha);
+  proximityBrownInit(&aslLongPB, 1 - aslAlphaLong);
+
+  proximityBrownInit(&aslDPB, 1 - aslAlpha);
 
   xTaskCreate(stabilizerTask, (const signed char * const)STABILIZER_TASK_NAME,
               STABILIZER_TASK_STACKSIZE, NULL, STABILIZER_TASK_PRI, NULL);
@@ -336,8 +347,10 @@ static void stabilizerAltHoldUpdate(void)
 #else
 //  lps25hGetData(&pressure, &temperature, &aslRaw);
 #endif
-  asl = proximityGetExp(asl, aslAlpha, proximityGetDistanceRaw(&proximityLPS25H));
-  aslLong = proximityGetExp(aslLong, aslAlphaLong, proximityGetDistanceRaw(&proximityLPS25H));
+  asl = proximityBrownSimpleExp(&aslPB, proximitySWGetRaw(&proximityLPS25H));
+  aslLong = proximityBrownSimpleExp(&aslLongPB, proximitySWGetRaw(&proximityLPS25H));
+
+  aslD = proximityBrownLinearExp(&aslDPB, proximitySWGetRaw(&proximityLPS25H));
 
   // Estimate vertical speed based on successive barometer readings. This is ugly :)
   vSpeedASL = deadband(asl - aslLong, vSpeedASLDeadband);
@@ -514,6 +527,7 @@ LOG_GROUP_STOP(vpid)
 
 LOG_GROUP_START(baro)
 LOG_ADD(LOG_FLOAT, asl, &asl)
+LOG_ADD(LOG_FLOAT, aslD, &aslD)
 LOG_ADD(LOG_FLOAT, aslRaw, &aslRaw)
 LOG_ADD(LOG_FLOAT, aslLong, &aslLong)
 LOG_ADD(LOG_FLOAT, temp, &temperature)
