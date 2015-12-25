@@ -114,7 +114,7 @@ static float vSpeedASLFac           = 0;    // multiplier
 static float vSpeedAccFac           = -48;  // multiplier
 static float vAccDeadband           = 0.05;  // Vertical acceleration deadband
 static float vSpeedASLDeadband      = 0.005; // Vertical speed based on barometer readings deadband
-static float vSpeedLimit            = 0.05;  // used to constrain vertical velocity
+static float vSpeedLimit            = 1.00;  // used to constrain vertical velocity
 static float errDeadband            = 0.00;  // error (target - altitude) deadband
 static float vBiasAlpha             = 0.98; // Blending factor we use to fuse vSpeedASL and vSpeedAcc
 static float aslAlpha               = 0.92; // Short term smoothing
@@ -126,9 +126,14 @@ static uint16_t altHoldMaxThrust    = 60000; // max altitude hold thrust
 static proximityBrown_t aslPB;
 static proximityBrown_t aslLongPB;
 
-static float aslD;
-static proximityBrown_t aslDPB;
-
+/* A proximity object for the vertical position. */
+proximity_t vPosP;
+proximityVar_t vPosPV;
+proximityKalman_t vPosPK;
+static float vPos = 0.0; // Vertical position integrated from vertical speed
+uint32_t vPosCounter = 0;
+#define VPOS_UPDATE_RATE_DIVIDER 4 // 100hz/4 = 25hz for vPos estimations
+static float aslK;     // Kalman smoothed asl
 
 RPYType rollType;
 RPYType pitchType;
@@ -174,7 +179,10 @@ void stabilizerInit(void)
   proximityBrownInit(&aslPB, 1 - aslAlpha);
   proximityBrownInit(&aslLongPB, 1 - aslAlphaLong);
 
-  proximityBrownInit(&aslDPB, 1 - aslAlpha);
+  proximityKalmanInit(&vPosPK, 1.0f, 175.0f, 1.0f, 2e-08f, 0.18f);
+
+  proximitySWInit(&vPosP, PROXIMITY_SWIN_MAX);
+  proximitySWVarInit(&vPosP, &vPosPV);
 
   xTaskCreate(stabilizerTask, (const signed char * const)STABILIZER_TASK_NAME,
               STABILIZER_TASK_STACKSIZE, NULL, STABILIZER_TASK_PRI, NULL);
@@ -264,6 +272,7 @@ static void stabilizerTask(void* param)
         accMAG = (acc.x*acc.x) + (acc.y*acc.y) + (acc.z*acc.z);
         // Estimate speed from acc (drifts)
         vSpeed += deadband(accWZ, vAccDeadband) * FUSION_UPDATE_DT;
+        vPos += vSpeed * 9.80665 * FUSION_UPDATE_DT;
 
         controllerCorrectAttitudePID(eulerRollActual, eulerPitchActual, eulerYawActual,
                                      eulerRollDesired, eulerPitchDesired, -eulerYawDesired,
@@ -347,16 +356,28 @@ static void stabilizerAltHoldUpdate(void)
 #else
 //  lps25hGetData(&pressure, &temperature, &aslRaw);
 #endif
-  asl = proximityBrownSimpleExp(&aslPB, proximitySWGetRaw(&proximityLPS25H));
-  aslLong = proximityBrownSimpleExp(&aslLongPB, proximitySWGetRaw(&proximityLPS25H));
+  aslRaw = proximitySWGetRaw(&proximityLPS25H);
+  asl = proximityBrownSimpleExp(&aslPB, aslRaw);
+  aslLong = proximityBrownSimpleExp(&aslLongPB, aslRaw);
 
-  aslD = proximityBrownLinearExp(&aslDPB, proximitySWGetRaw(&proximityLPS25H));
+  if(++vPosCounter >= 4) {
+    if(vPos == 0.0f) {
+      vPos = asl;
+    }
+    else {
+      proximityKalmanPredict(&vPosPK, vPos);
+      proximityKalmanObserve(&vPosPK, aslRaw);
+      aslK = proximityKalmanUpdate(&vPosPK);
+    }
+    proximitySWUpdate(&vPosP, vPos, proximityUpdAll, 0);
+    vPosCounter = 0;
+  }
 
   // Estimate vertical speed based on successive barometer readings. This is ugly :)
   vSpeedASL = deadband(asl - aslLong, vSpeedASLDeadband);
 
   // Estimate vertical speed based on Acc - fused with baro to reduce drift
-  vSpeed = constrain(vSpeed, -vSpeedLimit, vSpeedLimit);
+  //  vSpeed = constrain(vSpeed, -vSpeedLimit, vSpeedLimit);
   vSpeed = vSpeed * vBiasAlpha + vSpeedASL * (1.f - vBiasAlpha);
   vSpeedAcc = vSpeed;
 
@@ -527,7 +548,7 @@ LOG_GROUP_STOP(vpid)
 
 LOG_GROUP_START(baro)
 LOG_ADD(LOG_FLOAT, asl, &asl)
-LOG_ADD(LOG_FLOAT, aslD, &aslD)
+LOG_ADD(LOG_FLOAT, aslK, &aslK)
 LOG_ADD(LOG_FLOAT, aslRaw, &aslRaw)
 LOG_ADD(LOG_FLOAT, aslLong, &aslLong)
 LOG_ADD(LOG_FLOAT, temp, &temperature)
@@ -541,6 +562,8 @@ LOG_ADD(LOG_FLOAT, zSpeed, &vSpeed)
 LOG_ADD(LOG_FLOAT, vSpeed, &vSpeed)
 LOG_ADD(LOG_FLOAT, vSpeedASL, &vSpeedASL)
 LOG_ADD(LOG_FLOAT, vSpeedAcc, &vSpeedAcc)
+LOG_ADD(LOG_FLOAT, vPos, &vPos)
+LOG_ADD(LOG_FLOAT, vPosVar, &vPosPV.variance)
 LOG_GROUP_STOP(altHold)
 
 // Params for altitude hold

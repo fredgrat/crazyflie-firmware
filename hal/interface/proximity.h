@@ -60,6 +60,9 @@
  */
 #define PROXIMITY_LOG_ENABLED
 
+/* Forward declaration. */
+typedef struct proximityVarType proximityVar_t;
+
 /**
  * Proximity object. The caller must instantiate one object for each sensor being read.
  *
@@ -75,7 +78,20 @@ typedef struct {
   float accuracy;                  /* The accuracy in meters as reported by the sensor driver for the latest sample. */
   uint32_t sWinSize;               /* Number of samples in the sliding window. */
   float sWin[PROXIMITY_SWIN_MAX];  /* The sliding window array. The most recent samples in chronological order. Must be initialized before use. */
+  proximityVar_t *var;             /* Variance calculations object. */
 } proximity_t;
+
+/**
+ * Variance calculations object.
+ *
+ * This object is published here so that users may investigate the attributes during
+ * debugging. Such attributes can for instance be passed through the LOG framework.
+ */
+typedef struct proximityVarType {
+    proximity_t *dataSource;               /* The sliding window object to calculate variance for */
+    float avgdiffsqr[PROXIMITY_SWIN_MAX];  /* Each element equals = (dataSource->sWin[i] - proximitySWGetAvg(dataSource))^2. */
+    float variance;                        /* The sum of avgdiffsqr[0..n-1], divided by (n-1). */
+} proximityVar_t;
 
 /**
  * Proximity object for Brown's functions. The caller must instantiate one object for each measurement being smoothed.
@@ -84,10 +100,28 @@ typedef struct {
  * debugging. Such attributes can for instance be passed through the LOG framework.
  */
 typedef struct {
-    float alpha;                   /* Alpha smoothing factor. Betwenn 0 and 1 inclusive, where 1 means no smoothing. */
+    float alpha;                   /* Alpha smoothing factor. Between 0 and 1 inclusive, where 1 means no smoothing. */
     float single_smoothed;         /* Single smoothed value. Used by Simple Exponential and Linear Exponential functions. */
     float double_smoothed;         /* Double smoothed value. Used by Linear Exponential functions. */
 } proximityBrown_t;
+
+/**
+ * Proximity object for Kalmar functions. The caller must instantiate one object for each measurement being smoothed.
+ *
+ * This object is published here so that users may investigate the attributes during
+ * debugging. Such attributes can for instance be passed through the LOG framework.
+ */
+typedef struct {
+    float control_scale;           /* Control scale for the control value. */
+    float predicted_state_est;     /* Predicted state estimate. */
+    float predicted_prob_est;      /* Predicted probability estimate. */
+    float current_state_est;       /* Current state estimate. */
+    float current_prob_est;        /* Current probability estimate. */
+    float control_noise;           /* Control noise. */
+    float measurement_noise;       /* Measurement noise. */
+    float innovation;              /* Innovation. */
+    float innovation_covariance;   /* Innovation covariance. */
+} proximityKalman_t;
 
 /**
  * Calculations to perform when calling the proximityUpdate() function.
@@ -96,7 +130,8 @@ typedef enum {
   proximityUpdRaw = 0,             /* Update only the new raw sample, no calculations. */
   proximityUpdAvg = 1,             /* Calculate the new average value of the sliding window. */
   proximityUpdMed = 2,             /* Calculate the new median value of the sliding window. */
-  proximityUpdAll = proximityUpdRaw || proximityUpdAvg || proximityUpdMed,  /* Perform all the available calculations. Typically used for tuning and debugging only. */
+  proximityUpdVar = 3,             /* Calculates the variance of the sliding window. Useful to calculate sensor noise. */
+  proximityUpdAll = proximityUpdRaw || proximityUpdAvg || proximityUpdMed || proximityUpdVar,  /* Perform all the available calculations. Typically used for tuning and debugging only. */
 } proximityUpd_t;
 
 #if defined(MAXSONAR_ENABLED)
@@ -116,16 +151,24 @@ extern proximity_t proximityLPS25H;
 /* Proximity functions based on a sliding window of measurements. */
 void proximitySWInit(proximity_t *proximity, uint32_t sWinSize);
 void proximitySWDeInit(proximity_t *proximity);
+void proximitySWVarInit(proximity_t *proximity, proximityVar_t *proximityVar);
 void proximitySWUpdate(proximity_t *proximity, float distance, proximityUpd_t updType, float accuracy);
 float proximitySWGetRaw(proximity_t *proximity);
 float proximitySWGetAvg(proximity_t *proximity);
 float proximitySWGetMed(proximity_t *proximity);
+float proximitySWGetVar(proximity_t *proximity);
 float proximitySWGetAccuracy(proximity_t *proximity);
 
 /* Brown's Simple Exponential and Linear Exponential smoothing. */
 void proximityBrownInit(proximityBrown_t *proximityBrown, float alpha);
 float proximityBrownSimpleExp(proximityBrown_t *proximityBrown, float measurement);
 float proximityBrownLinearExp(proximityBrown_t *proximityBrown, float measurement);
+
+/* Kalman Linear smoothing. */
+void proximityKalmanInit(proximityKalman_t *proximityKalman, float control_scale, float initial_state_est, float initial_covariance, float control_noise, float measurement_noise);
+void proximityKalmanPredict(proximityKalman_t *proximityKalman, float control_value);
+void proximityKalmanObserve(proximityKalman_t *proximityKalman, float observation_value);
+float proximityKalmanUpdate(proximityKalman_t *proximityKalman);
 
 /* Task functions. */
 void proximityTaskInit(void);

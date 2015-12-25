@@ -107,6 +107,30 @@ static void proximitySWCalcAvg(proximity_t *proximity)
 }
 
 /**
+ * This function calculates the variance of the sliding window.
+ *
+ * The proximity variance object's attribute 'variance' is updated with the variance value before returning.
+ *
+ * @note This function must be called after calling proximitySWCalcAvg().
+ *
+ * @param proximity Proximity object.
+ */
+static void proximitySWCalcVar(proximity_t *proximity)
+{
+  assert_param(proximity);
+  assert_param(proximity->var);
+
+  float proximityNewVar = 0;
+  uint8_t n;
+  for (n = 0; n < proximity->sWinSize; n++) {
+    proximityNewVar += proximity->var->avgdiffsqr[n];
+  }
+
+  /* Update the variance calculations object with the variance value of the samples, considering the number of samples is sWinSize. */
+  proximity->var->variance = proximityNewVar / (proximity->sWinSize - 1);
+}
+
+/**
  * This function adds a distance measurement sample to the sliding window, discarding the oldest sample.
  *
  * @param proximity Proximity object.
@@ -126,6 +150,28 @@ static void proximitySWAddSample(proximity_t *proximity, float distance)
   /* Add the new sample to a separate variable for logging purposes. */
   proximity->distanceRaw = distance;
 #endif
+}
+
+
+/**
+ * This function adds a value to a separate, sliding window used for variance calculations.
+ * The value added = (proximity->sWin[proximity->sWinSize - 1] - proximity->distanceAvg)^2.
+ *
+ * As for the other sliding window, the oldest value is discarded when adding the new one.
+ *
+ * @param proximity Proximity object.
+ * @param distance  The new sample to add to the sliding window.
+ */
+static void proximitySWVarAddSample(proximity_t *proximity, float distance)
+{
+  assert_param(proximity);
+
+  /* Discard oldest value, move remaining values one slot to the left. Moving only the sWinSize number of values. */
+  memmove(&proximity->var->avgdiffsqr[0], &proximity->var->avgdiffsqr[1], (proximity->sWinSize - 1) * sizeof(float));
+
+  /* Add the new calculated value in the last (right-most) slot. */
+  float diff = proximity->sWin[proximity->sWinSize - 1] - proximity->distanceAvg;
+  proximity->var->avgdiffsqr[proximity->sWinSize - 1] = diff * diff; /* Primitive square function. */
 }
 
 /**
@@ -154,6 +200,22 @@ void proximitySWDeInit(proximity_t *proximity)
 
   /* Zero the entire proximity object, including the sliding window of samples. */
   memset(proximity, 0, sizeof(proximity_t));
+}
+
+/**
+ * Initialize a variance calculations object.
+ *
+ * The variance calculations object is tied to a proximity object to be updated by the proximityUpdate() function.
+ */
+void proximitySWVarInit(proximity_t *proximity, proximityVar_t *proximityVar)
+{
+  assert_param(proximity);
+  assert_param(proximityVar);
+
+  /* Zero the entire variance calculations object, including the avgdiffsqr array. */
+  memset(proximityVar, 0, sizeof(proximityVar_t));
+
+  proximity->var = proximityVar;
 }
 
 /**
@@ -193,6 +255,17 @@ void proximitySWUpdate(proximity_t *proximity, float distance, proximityUpd_t up
   if(accuracy > 0) {
     proximity->accuracy = accuracy;
   }
+
+#if defined(PROXIMITY_LOG_ENABLED)
+  /* If requested, and the variance object has been initialized, calculate the variance of the sliding window. */
+  if(((updType && proximityUpdVar) > 0) && (NULL != proximity->var)) {
+    proximitySWVarAddSample(proximity, distance);
+    proximitySWCalcVar(proximity);
+  }
+
+  /* Also store the raw value for logging purposes. */
+  proximity->distanceRaw = distance;
+#endif
 }
 
 /**
@@ -238,6 +311,21 @@ float proximitySWGetMed(proximity_t *proximity)
   assert_param(proximity);
 
   return proximity->distanceMed;
+}
+
+/**
+ * Function returning the result of the last variance calculation of the samples in the sliding window.
+ *
+ * @param proximity Proximity object.
+ *
+ * @return The result from the last variance calculation.
+ */
+float proximitySWGetVar(proximity_t *proximity)
+{
+  assert_param(proximity);
+  assert_param(proximity->var);
+
+  return proximity->var->variance;
 }
 
 /**
@@ -320,14 +408,59 @@ float proximityBrownLinearExp(proximityBrown_t *proximityBrown, float measuremen
   return est_a + est_b;
 }
 
+/**
+ * Function to initialize the proximity Kalman object.
+ *
+ * @param proximityKalman The proximity Kalman object.
+ */
+void proximityKalmanInit(proximityKalman_t *proximityKalman, float control_scale, float initial_state_est, float initial_covariance, float control_noise, float measurement_noise)
+{
+  assert_param(proximityKalman);
+
+  proximityKalman->control_scale = control_scale;
+  proximityKalman->current_state_est = initial_state_est;
+  proximityKalman->current_prob_est = initial_covariance;
+  proximityKalman->control_noise = control_noise;
+  proximityKalman->measurement_noise = measurement_noise;
+}
+
+float proximityKalmanUpdate(proximityKalman_t *proximityKalman)
+{
+  assert_param(proximityKalman);
+
+  float kalman_gain = proximityKalman->predicted_prob_est * proximityKalman->innovation_covariance;
+  proximityKalman->current_state_est = proximityKalman->predicted_state_est + kalman_gain * proximityKalman->innovation;
+  proximityKalman->current_prob_est = (1 - kalman_gain) * proximityKalman->predicted_prob_est;
+
+  return proximityKalman->current_state_est;
+}
+
+void proximityKalmanPredict(proximityKalman_t *proximityKalman, float control_value)
+{
+  assert_param(proximityKalman);
+
+  proximityKalman->predicted_state_est = proximityKalman->current_state_est + (proximityKalman->control_scale * control_value);
+  proximityKalman->predicted_prob_est = proximityKalman->current_prob_est + proximityKalman->control_noise;
+}
+
+void proximityKalmanObserve(proximityKalman_t *proximityKalman, float observation_value)
+{
+  assert_param(proximityKalman);
+
+  proximityKalman->innovation = observation_value - proximityKalman->predicted_state_est;
+  proximityKalman->innovation_covariance = proximityKalman->predicted_prob_est + proximityKalman->measurement_noise;
+}
+
 #if defined(MAXSONAR_ENABLED)
 /* A proximity object for the maxSonar driver. */
 proximity_t proximityMaxSonar;
+proximityVar_t proximityVarMaxSonar;
 #endif
 
 #if !defined(PLATFORM_CF1)
 /* A proximity object for the LPS25H driver. */
 proximity_t proximityLPS25H;
+proximityVar_t proximityVarLPS25H;
 #endif
 
 #if defined(PROXIMITY_LOG_ENABLED)
@@ -338,12 +471,14 @@ LOG_ADD(LOG_FLOAT, maxsonarRaw, &proximityMaxSonar.distanceRaw)
 LOG_ADD(LOG_FLOAT, maxsonarAvg, &proximityMaxSonar.distanceAvg)
 LOG_ADD(LOG_FLOAT, maxsonarMed, &proximityMaxSonar.distanceMed)
 LOG_ADD(LOG_FLOAT, maxsonarAccuracy, &proximityMaxSonar.accuracy)
+LOG_ADD(LOG_FLOAT, maxsonarVar, &proximityVarMaxSonar.variance)
 #endif
 #if !defined(PLATFORM_CF1)
 LOG_ADD(LOG_FLOAT, lps25hRaw, &proximityLPS25H.distanceRaw)
 LOG_ADD(LOG_FLOAT, lps25hAvg, &proximityLPS25H.distanceAvg)
 LOG_ADD(LOG_FLOAT, lps25hMed, &proximityLPS25H.distanceMed)
 LOG_ADD(LOG_FLOAT, lps25hAccuracy, &proximityLPS25H.accuracy)
+LOG_ADD(LOG_FLOAT, lps25hVar, &proximityVarLPS25H.variance)
 #endif
 LOG_GROUP_STOP(proximity)
 #endif
@@ -409,10 +544,12 @@ void proximityTaskInit(void)
 
 #if defined(MAXSONAR_ENABLED)
   proximitySWInit(&proximityMaxSonar, PROXIMITY_SWIN_MAX);
+  proximitySWVarInit(&proximityMaxSonar, &proximityVarMaxSonar);
 #endif
 
 #if !defined(PLATFORM_CF1)
   proximitySWInit(&proximityLPS25H, PROXIMITY_SWIN_MAX);
+  proximitySWVarInit(&proximityLPS25H, &proximityVarLPS25H);
 #endif
 
 #if defined(PROXIMITY_ENABLED)
